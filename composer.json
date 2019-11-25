@@ -1,5 +1,5 @@
 {
-    "name": "graphaware/neo4j-php-ogm",
+    "name": "sidus/neo4j-php-ogm",
     "description": "PHP Object Graph Mapper for Neo4j",
     "license": "Apache-2.0",
     "keywords": [
@@ -12,14 +12,21 @@
         "database",
         "cypher"
     ],
-    "homepage": "https://github.com/graphaware/neo4j-php-ogm",
-    "authors": [{
-        "name": "Christophe Willemsen",
-        "email": "christophe@graphaware.com"
-    }, {
-        "name": "GraphAware Ltd",
-        "email": "php@graphaware.com"
-    }],
+    "homepage": "https://github.com/VincentChalnot/neo4j-php-ogm",
+    "authors": [
+        {
+            "name": "Christophe Willemsen",
+            "email": "christophe@graphaware.com"
+        },
+        {
+            "name": "GraphAware Ltd",
+            "email": "php@graphaware.com"
+        },
+        {
+            "name": "Vincent Chalnot",
+            "email": "vincent@sidus.fr"
+        }
+    ],
     "require": {
         "php": "^5.6 || ^7.0",
         "doctrine/annotations": "^1.2",
@@ -31,7 +38,9 @@
         "psr-4": {
             "GraphAware\\Neo4j\\OGM\\": "src/"
         },
-        "files": ["src/Mapping/Neo4jOGMAnnotations.php"]
+        "files": [
+            "src/Mapping/Neo4jOGMAnnotations.php"
+        ]
     },
     "autoload-dev": {
         "psr-4": {

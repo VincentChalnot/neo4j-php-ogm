@@ -1007,6 +1007,9 @@ class UnitOfWork
 
             switch (true) {
                 case $value instanceof Collection:
+                    if ($value instanceof LazyCollection && !$value->isInitialized()) {
+                        continue 2;
+                    }
                 case is_array($value):
                     foreach ($value as $relatedEntity) {
                         $this->doRefresh($relatedEntity, $visited);
