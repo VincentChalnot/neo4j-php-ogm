@@ -97,10 +97,18 @@ abstract class GraphEntityMetadata implements ClassMetadata
         return [$this->entityIdMetadata->getPropertyName()];
     }
 
-    public function getTypeOfField($fieldName)
+    /**
+     * @param string $fieldName
+     *
+     * @return string
+     */
+    public function getTypeOfField($fieldName): string
     {
-        // TODO: Implement getTypeOfField() method.
-        return null;
+        if (!array_key_exists($fieldName, $this->entityPropertiesMetadata)) {
+            throw new \UnexpectedValueException("Unknown field {$fieldName}");
+        }
+
+        return $this->entityPropertiesMetadata[$fieldName]->getPropertyAnnotationMetadata()->getType();
     }
 
     public function getIdentifierValues($object)
