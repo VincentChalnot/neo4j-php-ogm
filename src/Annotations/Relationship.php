@@ -13,6 +13,7 @@ namespace GraphAware\Neo4j\OGM\Annotations;
 
 /**
  * @Annotation
+ *
  * @Target({"PROPERTY"})
  */
 final class Relationship
@@ -48,4 +49,7 @@ final class Relationship
      * @var bool
      */
     public $collection;
+
+    /** @var array */
+    public $cascade;
 }

@@ -38,7 +38,7 @@ final class RelationshipMetadata
     private $reflectionProperty;
 
     /**
-     * @var \GraphAware\Neo4j\OGM\Annotations\Relationship
+     * @var Relationship
      */
     private $relationshipAnnotation;
 
@@ -58,12 +58,12 @@ final class RelationshipMetadata
     private $orderBy;
 
     /**
-     * @param string                                         $className
-     * @param \ReflectionProperty                            $reflectionProperty
-     * @param \GraphAware\Neo4j\OGM\Annotations\Relationship $relationshipAnnotation
-     * @param bool                                           $isLazy
-     * @param OrderBy                                        $orderBy
-     * @param mixed                                          $isFetch
+     * @param string              $className
+     * @param \ReflectionProperty $reflectionProperty
+     * @param Relationship        $relationshipAnnotation
+     * @param bool                $isLazy
+     * @param mixed               $isFetch
+     * @param OrderBy             $orderBy
      */
     public function __construct($className, \ReflectionProperty $reflectionProperty, Relationship $relationshipAnnotation, $isLazy = false, $isFetch = false, OrderBy $orderBy = null)
     {
@@ -74,8 +74,11 @@ final class RelationshipMetadata
         $this->isLazy = $isLazy;
         $this->isFetch = $isFetch;
         $this->orderBy = $orderBy;
+        if (null === $relationshipAnnotation->cascade) {
+            throw new \LogicException("Missing cascade option in relationship annotation {$className}::{$reflectionProperty->getName()}");
+        }
         if (null !== $orderBy) {
-            if (!in_array($orderBy->order, ['ASC', 'DESC'], true)) {
+            if (!\in_array($orderBy->order, ['ASC', 'DESC'], true)) {
                 throw new MappingException(sprintf('The order "%s" is not valid', $orderBy->order));
             }
         }
@@ -210,6 +213,14 @@ final class RelationshipMetadata
     }
 
     /**
+     * @return array
+     */
+    public function getCascade()
+    {
+        return $this->relationshipAnnotation->cascade;
+    }
+
+    /**
      * @param $object
      */
     public function initializeCollection($object)
@@ -217,12 +228,13 @@ final class RelationshipMetadata
         if (!$this->isCollection()) {
             throw new \LogicException(sprintf('The property mapping this relationship is not of collection type in "%s"', $this->className));
         }
-        if (is_array($this->getValue($object)) && !empty($this->getValue($object))) {
-            $this->setValue($object, new ArrayCollection($this->getValue($object)));
+        $value = $this->getValue($object);
+        if (\is_array($value) && !empty($value)) {
+            $this->setValue($object, new ArrayCollection($value));
 
             return;
         }
-        if ($this->getValue($object) instanceof ArrayCollection || $this->getValue($object) instanceof AbstractLazyCollection) {
+        if ($value instanceof ArrayCollection || $value instanceof AbstractLazyCollection) {
             return;
         }
         $this->setValue($object, new Collection());

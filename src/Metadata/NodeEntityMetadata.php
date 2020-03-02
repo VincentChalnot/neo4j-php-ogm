@@ -172,11 +172,9 @@ final class NodeEntityMetadata extends GraphEntityMetadata
     }
 
     /**
-     * @param bool $andRelationshipEntities
-     *
      * @return RelationshipMetadata[]
      */
-    public function getFetchRelationships($andRelationshipEntities = false)
+    public function getFetchRelationships()
     {
         $rels = [];
         foreach ($this->relationships as $relationship) {
@@ -220,7 +218,7 @@ final class NodeEntityMetadata extends GraphEntityMetadata
     }
 
     /**
-     * @return RelationshipMetadata[]|RelationshipEntityMetadata[]
+     * @return RelationshipMetadata[]
      */
     public function getRelationshipEntities()
     {
