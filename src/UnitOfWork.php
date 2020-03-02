@@ -137,7 +137,7 @@ class UnitOfWork
 
         switch ($entityState) {
             case self::STATE_MANAGED:
-                //$this->nodesScheduledForUpdate[$oid] = $entity;
+                $this->nodesScheduledForUpdate[$oid] = $entity;
                 break;
             case self::STATE_NEW:
                 $this->nodesScheduledForCreate[$oid] = $entity;

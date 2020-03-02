@@ -22,7 +22,6 @@ use GraphAware\Neo4j\OGM\EntityManager;
 use GraphAware\Neo4j\OGM\Exception\MappingException;
 use GraphAware\Neo4j\OGM\Metadata\NodeEntityMetadata;
 use GraphAware\Neo4j\OGM\Metadata\RelationshipEntityMetadata;
-use GraphAware\Neo4j\OGM\Util\DirectionUtils;
 
 class EntityHydrator
 {
@@ -80,6 +79,9 @@ class EntityHydrator
         $mappedBy = $relationshipMetadata->getMappedByProperty();
         if ($mappedBy) {
             $targetRel = $targetMeta->getRelationship($mappedBy);
+            if (null === $targetRel) {
+                throw new \RuntimeException("No metadata for relationship {$mappedBy}");
+            }
             if ($targetRel->isCollection()) {
                 $targetRel->addToCollection($o, $sourceEntity);
             } else {
