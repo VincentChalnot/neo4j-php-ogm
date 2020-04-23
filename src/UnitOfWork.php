@@ -26,6 +26,7 @@ use GraphAware\Neo4j\OGM\Persister\FlushOperationProcessor;
 use GraphAware\Neo4j\OGM\Persister\RelationshipEntityPersister;
 use GraphAware\Neo4j\OGM\Persister\RelationshipPersister;
 use GraphAware\Neo4j\OGM\Proxy\LazyCollection;
+use function Clue\StreamFilter\fun;
 
 /**
  * @author Christophe Willemsen <christophe@graphaware.com>
@@ -157,54 +158,18 @@ class UnitOfWork
 
         foreach ($associations as $association) {
             $value = $association->getValue($entity);
-            if ($value instanceof LazyCollection) {
-                $value = $value->getAddWithoutFetch();
-            }
-            if (\is_array($value) || $value instanceof Collection) {
-                foreach ($value as $assoc) {
-                    $this->persistRelationship($entity, $assoc, $association, $visited);
-                }
-            } else {
-                $entityB = $association->getValue($entity);
-                if (\is_object($entityB)) {
-                    $this->persistRelationship($entity, $entityB, $association, $visited);
-                }
-            }
+            // Always schedule all relations
+            $this->scheduleRelationshipReferenceForCreate($entity, $value, $association);
+            // But not necessarily entities attached with those relations
+            $this->handleCascadeForRelationShip(
+                $entity,
+                'persist',
+                function ($value, $entity) use ($association, $visited) {
+                    $this->doPersist($value, $visited);
+                },
+                $association
+            );
         }
-    }
-
-    public function persistRelationship($entityA, $entityB, RelationshipMetadata $relationship, array &$visited)
-    {
-        if ($entityB instanceof Collection) {
-            foreach ($entityB as $e) {
-                $aMeta = $this->entityManager->getClassMetadataFor(\get_class($entityA));
-                $bMeta = $this->entityManager->getClassMetadataFor(\get_class($entityB));
-                $type = $relationship->isRelationshipEntity() ? $this->entityManager->getRelationshipEntityMetadata(
-                    $relationship->getRelationshipEntityClass()
-                )->getType() : $relationship->getType();
-                $hashStr = $aMeta->getIdValue($entityA).$bMeta->getIdValue($entityB).$type.$relationship->getDirection(
-                    );
-                $hash = md5($hashStr);
-                if (!\array_key_exists($hash, $this->relationshipsScheduledForCreated)) {
-                    $this->relationshipsScheduledForCreated[] = [
-                        $entityA,
-                        $relationship,
-                        $e,
-                        $relationship->getPropertyName(),
-                    ];
-                }
-                $this->doPersist($e, $visited);
-            }
-
-            return;
-        }
-        $this->doPersist($entityB, $visited);
-        $this->relationshipsScheduledForCreated[] = [
-            $entityA,
-            $relationship,
-            $entityB,
-            $relationship->getPropertyName(),
-        ];
     }
 
     public function flush()
@@ -495,7 +460,27 @@ class UnitOfWork
 
     public function scheduleRelationshipReferenceForCreate($entity, $target, RelationshipMetadata $relationship)
     {
-        $this->relationshipsScheduledForCreated[] = [$entity, $relationship, $target, $relationship->getPropertyName()];
+        $entityMetadata = $this->entityManager->getClassMetadataFor(\get_class($entity));
+        $targetMetadata = $this->entityManager->getClassMetadataFor(\get_class($target));
+        if ($relationship->isRelationshipEntity()) {
+            $relationshipMetadata = $this->entityManager->getRelationshipEntityMetadata(
+                $relationship->getRelationshipEntityClass()
+            );
+            $type = $relationshipMetadata->getType();
+        } else {
+            $type = $relationship->getType();
+        }
+        $hashStr = $entityMetadata->getIdValue($entity).$targetMetadata->getIdValue($target);
+        $hashStr .= $type.$relationship->getDirection();
+        $hash = md5($hashStr);
+        if (!\array_key_exists($hash, $this->relationshipsScheduledForCreated)) {
+            $this->relationshipsScheduledForCreated[$hash] = [
+                $entity,
+                $relationship,
+                $target,
+                $relationship->getPropertyName(),
+            ];
+        }
     }
 
     public function scheduleRelationshipReferenceForDelete($entity, $target, RelationshipMetadata $relationship)
@@ -521,30 +506,54 @@ class UnitOfWork
         $classMetadata = $this->entityManager->getClassMetadataFor(\get_class($entity));
 
         foreach ($classMetadata->getRelationshipEntities() as $relationshipMetadata) {
-            if (!\in_array($operationName, $relationshipMetadata->getCascade(), true)) {
-                continue;
-            }
-            $value = $relationshipMetadata->getValue($entity);
-            if (null === $value) {
-                continue;
-            }
-            if ($relationshipMetadata->isCollection()) {
-                if ($value instanceof AbstractLazyCollection
-                    && $ignoreUninitializedCollections
-                    && !$value->isInitialized()
-                ) {
-                    continue;
-                }
-                if (0 === count($value)) {
-                    continue;
-                }
+            $this->handleCascadeForRelationShip(
+                $entity,
+                $operationName,
+                $callback,
+                $relationshipMetadata,
+                $ignoreUninitializedCollections
+            );
+        }
+    }
 
-                foreach ($value as $v) {
-                    $callback($v, $entity);
-                }
-            } else {
-                $callback($value, $entity);
+
+    /**
+     * @param object               $entity
+     * @param string               $operationName
+     * @param callable             $callback
+     * @param RelationshipMetadata $relationshipMetadata
+     * @param bool                 $ignoreUninitializedCollections
+     */
+    protected function handleCascadeForRelationShip(
+        $entity,
+        string $operationName,
+        callable $callback,
+        RelationshipMetadata $relationshipMetadata,
+        bool $ignoreUninitializedCollections = true
+    ): void {
+        if (!\in_array($operationName, $relationshipMetadata->getCascade(), true)) {
+            return;
+        }
+        $value = $relationshipMetadata->getValue($entity);
+        if (null === $value) {
+            return;
+        }
+        if ($relationshipMetadata->isCollection()) {
+            if ($value instanceof AbstractLazyCollection
+                && $ignoreUninitializedCollections
+                && !$value->isInitialized()
+            ) {
+                return;
             }
+            if (0 === count($value)) {
+                return;
+            }
+
+            foreach ($value as $v) {
+                $callback($v, $entity);
+            }
+        } else {
+            $callback($value, $entity);
         }
     }
 
