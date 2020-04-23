@@ -168,12 +168,20 @@ class UnitOfWork
                     if (\in_array('persist', $association->getCascade(), true)) {
                         $this->doPersist($value, $visited);
                     } else {
-                        // We want to ensure that even if the entity is not persisted and event if it's not managed, it
-                        // it won't crash
+                        // We want to ensure that even if the entity is not persisted and even if it's not managed it
+                        // still exists in the various hashmaps so it won't crash so the relationship can be saved
                         $targetMetadata = $this->entityManager->getClassMetadataFor(\get_class($value));
-                        $oid = spl_object_hash($value);
-                        $this->hashesMap[$oid] = $value;
-                        $this->entityIds[$oid] = $targetMetadata->getIdValue($value);
+                        $valueId = $targetMetadata->getIdValue($value);
+                        $valueOid = spl_object_hash($value);
+                        if (null === $valueId) {
+                            // If the value has no id, no choice but to persist it anyway
+                            $this->doPersist($value, $visited);
+
+                            return;
+                        }
+                        $this->hashesMap[$valueOid] = $value;
+                        $this->entityIds[$valueOid] = $valueId;
+                        $this->entitiesById[$valueOid] = $value;
                     }
                 },
                 $association
@@ -188,11 +196,6 @@ class UnitOfWork
             $this->eventManager->dispatchEvent(Events::PRE_FLUSH, new Event\PreFlushEventArgs($this->entityManager));
         }
 
-        //Detect changes
-        $this->detectRelationshipReferenceChanges();
-        $this->detectRelationshipEntityChanges();
-        $this->computeRelationshipEntityPropertiesChanges();
-        $this->detectEntityChanges();
         $statements = [];
 
         //onFlush
@@ -339,25 +342,6 @@ class UnitOfWork
             = [];
     }
 
-    public function detectEntityChanges()
-    {
-        $managed = [];
-        foreach ($this->entityStates as $oid => $state) {
-            if (self::STATE_MANAGED === $state) {
-                $managed[] = $oid;
-            }
-        }
-
-        foreach ($managed as $oid) {
-            $id = $this->entityIds[$oid];
-            $entityA = $this->entitiesById[$id];
-            $visited = [];
-            $this->doPersist($entityA, $visited);
-            $entityB = $this->entityStateReferences[$id];
-            $this->computeChanges($entityA, $entityB);
-        }
-    }
-
     public function addManagedRelationshipReference($entityA, $entityB, $field, RelationshipMetadata $relationship)
     {
         $aoid = spl_object_hash($entityA);
@@ -368,23 +352,6 @@ class UnitOfWork
         ];
         $this->addManaged($entityA);
         $this->addManaged($entityB);
-    }
-
-    public function detectRelationshipEntityChanges()
-    {
-        $managed = [];
-        foreach ($this->relationshipEntityStates as $oid => $state) {
-            if (self::STATE_MANAGED === $state) {
-                $managed[] = $oid;
-            }
-        }
-
-        foreach ($managed as $oid) {
-            $reA = $this->reEntitiesById[$this->reEntityIds[$oid]];
-            $reB = $this->relationshipEntityReferences[$this->reEntityIds[$oid]];
-            $this->computeRelationshipEntityChanges($reA, $reB);
-//            $this->checkRelationshipEntityDeletions($reA);
-        }
     }
 
     public function addManagedRelationshipEntity($entity, $pointOfView, $field)
@@ -411,75 +378,10 @@ class UnitOfWork
         return null;
     }
 
-    public function detectRelationshipReferenceChanges()
-    {
-        foreach ($this->managedRelationshipReferences as $oid => $reference) {
-            foreach ($reference as $field => $info) {
-                /** @var RelationshipMetadata $relMeta */
-                $relMeta = $info[0]['rel'];
-                $entity = $info[0]['entity'];
-                $value = $relMeta->getValue($entity);
-                if ($value instanceof ArrayCollection || $value instanceof AbstractLazyCollection) {
-                    $value = $value->toArray();
-                }
-                if (\is_array($value)) {
-                    $currentValue = array_map(
-                        static function ($ref) {
-                            return $ref['target'];
-                        },
-                        $info
-                    );
-
-                    $compare = static function ($a, $b) {
-                        if ($a === $b) {
-                            return 0;
-                        }
-
-                        return $a < $b ? -1 : 1;
-                    };
-
-                    $added = array_udiff($value, $currentValue, $compare);
-                    $removed = array_udiff($currentValue, $value, $compare);
-
-                    foreach ($added as $add) {
-                        // Since this is the same property, it should be ok to re-use the first relationship
-                        $this->scheduleRelationshipReferenceForCreate($entity, $add, $relMeta);
-                    }
-                    foreach ($removed as $remove) {
-                        $this->scheduleRelationshipReferenceForDelete($entity, $remove, $relMeta);
-                    }
-                } elseif (\is_object($value)) {
-                    $target = $info[0]['target'];
-                    if ($value !== $target) {
-                        $this->scheduleRelationshipReferenceForDelete($entity, $target, $relMeta);
-                        $this->scheduleRelationshipReferenceForCreate($entity, $value, $relMeta);
-                    }
-                } elseif (null === $value) {
-                    foreach ($info as $ref) {
-                        $this->scheduleRelationshipReferenceForDelete($entity, $ref['target'], $ref['rel']);
-                    }
-                }
-            }
-        }
-    }
 
     public function scheduleRelationshipReferenceForCreate($entity, $target, RelationshipMetadata $relationship)
     {
-        $entityMetadata = $this->entityManager->getClassMetadataFor(\get_class($entity));
-        $entityId = $entityMetadata->getIdValue($entity);
-        $targetMetadata = $this->entityManager->getClassMetadataFor(\get_class($target));
-        $targetId = $targetMetadata->getIdValue($target);
-        if ($relationship->isRelationshipEntity()) {
-            $relationshipMetadata = $this->entityManager->getRelationshipEntityMetadata(
-                $relationship->getRelationshipEntityClass()
-            );
-            $type = $relationshipMetadata->getType();
-        } else {
-            $type = $relationship->getType();
-        }
-        $hashStr = $entityId.'_'.$targetId.'_'.$type.'_'.$relationship->getDirection();
-        $hash = md5($hashStr);
-
+        $hash = spl_object_hash($entity).spl_object_hash($relationship).spl_object_hash($target);
         if (!\array_key_exists($hash, $this->relationshipsScheduledForCreated)) {
             $this->relationshipsScheduledForCreated[$hash] = [
                 'entity' => $entity,
@@ -737,8 +639,19 @@ class UnitOfWork
      */
     public function merge($entity)
     {
-        // TODO write me
-        trigger_error('Function not implemented.', E_USER_ERROR);
+        $targetMetadata = $this->entityManager->getClassMetadataFor(\get_class($entity));
+        $entityId = $targetMetadata->getIdValue($entity);
+        $oid = spl_object_hash($entity);
+        if (null === $entityId) {
+            throw new \LogicException("Cannot merge an entity without an id: {$oid}");
+        }
+        $this->hashesMap[$oid] = $entity;
+        $this->entityIds[$oid] = $entityId;
+        $this->entitiesById[$entityId] = $entity;
+        $this->entityStates[$oid] = self::STATE_MANAGED;
+        $this->manageEntityReference($oid);
+
+        return $entity;
     }
 
     /**
@@ -908,53 +821,6 @@ class UnitOfWork
         $id = $this->entityIds[$oid];
         $entity = $this->entitiesById[$id];
         $this->entityStateReferences[$id] = clone $entity;
-    }
-
-    private function computeChanges($entityA, $entityB)
-    {
-        $classMetadata = $this->entityManager->getClassMetadataFor(\get_class($entityA));
-        $propertyFields = array_merge($classMetadata->getPropertiesMetadata(), $classMetadata->getLabeledProperties());
-        foreach ($propertyFields as $field => $meta) {
-            // force proxy to initialize (only needed with proxy manager 1.x
-            $reflClass = new \ReflectionClass($classMetadata->getClassName());
-            foreach ($reflClass->getMethods() as $method) {
-                if ($method->getNumberOfRequiredParameters() === 0 && $method->getName() === 'getId') {
-                    $entityA->getId();
-                }
-            }
-            $p1 = $meta->getValue($entityA);
-            $p2 = $meta->getValue($entityB);
-            if ($p1 !== $p2) {
-                $this->nodesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
-            }
-        }
-    }
-
-    private function computeRelationshipEntityPropertiesChanges()
-    {
-        foreach ($this->relationshipEntityStates as $oid => $state) {
-            if ($state === self::STATE_MANAGED) {
-                $e = $this->reEntitiesById[$this->reEntityIds[$oid]];
-                $cm = $this->entityManager->getClassMetadataFor(\get_class($e));
-                $newValues = $cm->getPropertyValuesArray($e);
-                if (!\array_key_exists($oid, $this->reOriginalData)) {
-                }
-                $originalValues = $this->reOriginalData[$oid];
-                if (count(array_diff($originalValues, $newValues)) > 0) {
-                    $this->relEntitesScheduledForUpdate[$oid] = $e;
-                }
-            }
-        }
-    }
-
-    private function computeRelationshipEntityChanges($entityA, $entityB)
-    {
-        $classMetadata = $this->entityManager->getRelationshipEntityMetadata(\get_class($entityA));
-        foreach ($classMetadata->getPropertiesMetadata() as $meta) {
-            if ($meta->getValue($entityA) !== $meta->getValue($entityB)) {
-                $this->relEntitesScheduledForUpdate[spl_object_hash($entityA)] = $entityA;
-            }
-        }
     }
 
     private function getOriginalRelationshipEntityData($entity)
